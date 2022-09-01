@@ -483,6 +483,10 @@ func (cosigner *LocalCosigner) SetEphemeralSecretPartsAndSign(
 		}
 	}
 
-	res, err := cosigner.sign(CosignerSignRequest{req.SignBytes})
+	if req.HRST.Height == 0 && req.HRST.Round == 0 && req.HRST.Step == 0 {
+		res, err := cosigner.signMekatek(CosignerSignRequest{req.SignBytes})
+	} else {
+		res, err := cosigner.sign(CosignerSignRequest{req.SignBytes})
+	}
 	return &res, err
 }

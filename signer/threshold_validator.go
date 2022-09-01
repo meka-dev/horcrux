@@ -530,9 +530,9 @@ func (pv *ThresholdValidator) SignMekatek(req CosignerSignMekatekRequest) ([]byt
 	var signBytes []byte
 	switch {
 	case req.BuildBlockRequest != nil:
-		signBytes = req.RegisterChallenge.SignableBytes()
-	case req.RegisterChallenge != nil:
 		signBytes = req.BuildBlockRequest.SignableBytes()
+	case req.RegisterChallenge != nil:
+		signBytes = req.RegisterChallenge.SignableBytes()
 	}
 
 	// Mekatek signing requests are not bound to a specific height, round and step and can be
