@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
+	"github.com/meka-dev/mekatek-go/mekabuild"
 	proto "github.com/strangelove-ventures/horcrux/signer/proto"
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/libs/log"
@@ -122,6 +123,32 @@ func (pv *ThresholdValidator) SignProposal(chainID string, proposal *tmProto.Pro
 	proposal.Timestamp = stamp
 
 	return err
+}
+
+func (pv *ThresholdValidator) SignMekatekBuildBlockRequest(req *mekabuild.BuildBlockRequest) error {
+	sig, err := pv.SignMekatek(CosignerSignMekatekRequest{
+		ChainID:           req.ChainID,
+		BuildBlockRequest: req,
+	})
+	if err != nil {
+		return err
+	}
+
+	req.Signature = sig
+	return nil
+}
+
+func (pv *ThresholdValidator) SignMekatekRegisterChallenge(c *mekabuild.RegisterChallenge) error {
+	sig, err := pv.SignMekatek(CosignerSignMekatekRequest{
+		ChainID:           "", // TODO: Add a ChainID to mekabuild.RegisterChallenge
+		RegisterChallenge: c,
+	})
+	if err != nil {
+		return err
+	}
+
+	c.Signature = sig
+	return nil
 }
 
 type Block struct {
@@ -474,4 +501,135 @@ func (pv *ThresholdValidator) SignBlock(chainID string, block *Block) ([]byte, t
 	}
 
 	return signature, stamp, nil
+}
+
+func (pv *ThresholdValidator) SignMekatek(req CosignerSignMekatekRequest) ([]byte, error) {
+	// Only the leader can execute this function. Followers can handle the requests,
+	// but they just need to proxy the request to the raft leader
+	if pv.raftStore.raft == nil {
+		return nil, errors.New("raft not yet initialized")
+	}
+	if pv.raftStore.raft.State() != raft.Leader {
+		pv.logger.Debug("I am not the raft leader. Proxying request to the leader")
+		signRes, err := pv.raftStore.LeaderSignMekatek(req)
+		if err != nil {
+			if _, ok := err.(*rpcTypes.RPCError); ok {
+				rpcErrUnwrapped := err.(*rpcTypes.RPCError).Data
+				// Need to return BeyondBlockError after proxy since the error type will be lost over RPC
+				if len(rpcErrUnwrapped) > 33 && rpcErrUnwrapped[:33] == "Progress already started on block" {
+					return nil, &BeyondBlockError{msg: rpcErrUnwrapped}
+				}
+			}
+			return nil, err
+		}
+		return signRes.Signature, nil
+	}
+
+	pv.logger.Debug("I am the raft leader. Managing the sign process for this block")
+
+	var signBytes []byte
+	switch {
+	case req.BuildBlockRequest != nil:
+		signBytes = req.RegisterChallenge.SignableBytes()
+	case req.RegisterChallenge != nil:
+		signBytes = req.BuildBlockRequest.SignableBytes()
+	}
+
+	// Mekatek signing requests are not bound to a specific height, round and step and can be
+	// double signed since they don't represent on-chain blocks.
+	hrst := HRSTKey{Timestamp: time.Now().UnixNano()}
+
+	numPeers := len(pv.peers)
+	total := uint8(numPeers + 1)
+	getEphemeralWaitGroup := sync.WaitGroup{}
+
+	// Only wait until we have threshold sigs
+	getEphemeralWaitGroup.Add(pv.threshold - 1)
+	// Used to track how close we are to threshold
+
+	ourID := pv.cosigner.GetID()
+
+	encryptedEphemeralSharesThresholdMap := make(map[Cosigner][]CosignerEphemeralSecretPart)
+	thresholdPeersMutex := sync.Mutex{}
+
+	for _, peer := range pv.peers {
+		go pv.waitForPeerEphemeralShares(peer, hrst, &getEphemeralWaitGroup,
+			&encryptedEphemeralSharesThresholdMap, &thresholdPeersMutex)
+	}
+
+	ourEphemeralSecretParts, err := pv.cosigner.GetEphemeralSecretParts(hrst)
+	if err != nil {
+		// Our ephemeral secret parts are required, cannot proceed
+		return nil, err
+	}
+
+	// Wait for threshold cosigners to be complete
+	// A Cosigner will either respond in time, or be cancelled with timeout
+	if waitUntilCompleteOrTimeout(&getEphemeralWaitGroup, 4*time.Second) {
+		return nil, errors.New("timed out waiting for ephemeral shares")
+	}
+
+	thresholdPeersMutex.Lock()
+	encryptedEphemeralSharesThresholdMap[pv.cosigner] = ourEphemeralSecretParts.EncryptedSecrets
+	thresholdPeersMutex.Unlock()
+
+	pv.logger.Debug("Have threshold peers")
+
+	setEphemeralAndSignWaitGroup := sync.WaitGroup{}
+
+	// Only wait until we have threshold sigs
+	setEphemeralAndSignWaitGroup.Add(pv.threshold)
+
+	// destination for share signatures
+	shareSignatures := make([][]byte, total)
+
+	// share sigs is updated by goroutines
+	shareSignaturesMutex := sync.Mutex{}
+
+	var ephemeralPublic []byte
+
+	for peer := range encryptedEphemeralSharesThresholdMap {
+		// set peerEphemeralSecretParts and sign in single rpc call.
+		go pv.waitForPeerSetEphemeralSharesAndSign(ourID, peer, hrst, &encryptedEphemeralSharesThresholdMap,
+			signBytes, &shareSignatures, &shareSignaturesMutex, &ephemeralPublic, &setEphemeralAndSignWaitGroup)
+	}
+
+	// Wait for threshold cosigners to be complete
+	// A Cosigner will either respond in time, or be cancelled with timeout
+	if waitUntilCompleteOrTimeout(&setEphemeralAndSignWaitGroup, 4*time.Second) {
+		return nil, errors.New("timed out waiting for peers to sign")
+	}
+
+	pv.logger.Debug("Done waiting for cosigners, assembling signatures")
+
+	// collect all valid responses into array of ids and signatures for the threshold lib
+	sigIds := make([]int, 0)
+	shareSigs := make([][]byte, 0)
+	for idx, shareSig := range shareSignatures {
+		if len(shareSig) == 0 {
+			continue
+		}
+		sigIds = append(sigIds, idx+1)
+
+		// we are ok to use the share signatures - complete boolean
+		// prevents future concurrent access
+		shareSigs = append(shareSigs, shareSig)
+	}
+
+	if len(sigIds) < pv.threshold {
+		return nil, errors.New("not enough co-signers")
+	}
+
+	// assemble into final signature
+	combinedSig := tsed25519.CombineShares(total, sigIds, shareSigs)
+
+	signature := ephemeralPublic
+	signature = append(signature, combinedSig...)
+
+	// verify the combined signature before saving to watermark
+	if !pv.pubkey.VerifySignature(signBytes, signature) {
+		return nil, errors.New("combined signature is not valid")
+	}
+
+	return signature, nil
 }

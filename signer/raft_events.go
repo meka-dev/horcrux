@@ -3,6 +3,7 @@ package signer
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	proto "github.com/strangelove-ventures/horcrux/signer/proto"
@@ -71,6 +72,49 @@ func (s *RaftStore) LeaderSignBlock(req CosignerSignBlockRequest) (*CosignerSign
 		return nil, err
 	}
 	return &CosignerSignBlockResponse{
+		Signature: res.GetSignature(),
+	}, nil
+}
+
+func (s *RaftStore) LeaderSignMekatek(req CosignerSignMekatekRequest) (*CosignerSignMekatekResponse, error) {
+	client, conn, err := s.getLeaderGRPCClient()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	context, cancelFunc := getContext()
+	defer cancelFunc()
+
+	var protoReq proto.CosignerGRPCSignMekatekRequest
+	switch {
+	case req.BuildBlockRequest != nil:
+		protoReq.Request = &proto.CosignerGRPCSignMekatekRequest_BuildBlockRequest{
+			BuildBlockRequest: &proto.SignMekatekBuildBlockRequest{
+				ChainId:       req.BuildBlockRequest.ChainID,
+				Height:        req.BuildBlockRequest.Height,
+				ValidatorAddr: req.BuildBlockRequest.ValidatorAddress,
+				MaxBytes:      req.BuildBlockRequest.MaxBytes,
+				MaxGas:        req.BuildBlockRequest.MaxGas,
+				Txs:           req.BuildBlockRequest.Txs,
+			},
+		}
+	case req.RegisterChallenge != nil:
+		protoReq.Request = &proto.CosignerGRPCSignMekatekRequest_RegisterChallenge{
+			RegisterChallenge: &proto.SignMekatekRegisterChallenge{
+				Challenge: req.RegisterChallenge.Bytes,
+				ChainId:   req.ChainID,
+			},
+		}
+	default:
+		return nil, fmt.Errorf("invalid mekatek sign request")
+	}
+
+	res, err := client.SignMekatek(context, &protoReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CosignerSignMekatekResponse{
 		Signature: res.GetSignature(),
 	}, nil
 }

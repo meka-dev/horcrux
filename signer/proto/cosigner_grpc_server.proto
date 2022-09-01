@@ -9,6 +9,7 @@ service CosignerGRPC {
 	rpc SetEphemeralSecretPartsAndSign (CosignerGRPCSetEphemeralSecretPartsAndSignRequest) returns (CosignerGRPCSetEphemeralSecretPartsAndSignResponse) {}
   rpc GetEphemeralSecretParts (CosignerGRPCGetEphemeralSecretPartsRequest) returns (CosignerGRPCGetEphemeralSecretPartsResponse) {}
   rpc TransferLeadership (CosignerGRPCTransferLeadershipRequest) returns (CosignerGRPCTransferLeadershipResponse) {}
+	rpc SignMekatek (CosignerGRPCSignMekatekRequest) returns (CosignerGRPCSignMekatekResponse) {}
 }
 
 message Block {
@@ -70,4 +71,30 @@ message CosignerGRPCTransferLeadershipRequest {
 message CosignerGRPCTransferLeadershipResponse {
   string leaderID = 1;
   string leaderAddress = 2;
+}
+
+message CosignerGRPCSignMekatekRequest {
+  oneof request {
+    SignMekatekBuildBlockRequest build_block_request = 1;
+    SignMekatekRegisterChallenge register_challenge  = 2;
+  }
+}
+
+message CosignerGRPCSignMekatekResponse {
+  bytes signature = 1;
+}
+
+
+message SignMekatekBuildBlockRequest {
+  string         chain_id       = 1;
+  int64          height         = 2;
+  string         validator_addr = 3;
+  int64          max_bytes      = 4;
+  int64          max_gas        = 5;
+  repeated bytes txs            = 6;
+}
+
+message SignMekatekRegisterChallenge {
+  bytes  challenge = 1;
+  string chain_id  = 2;
 }

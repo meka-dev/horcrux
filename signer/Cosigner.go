@@ -3,6 +3,7 @@ package signer
 import (
 	"time"
 
+	"github.com/meka-dev/mekatek-go/mekabuild"
 	proto "github.com/strangelove-ventures/horcrux/signer/proto"
 )
 
@@ -122,6 +123,16 @@ type CosignerSetEphemeralSecretPartsAndSignRequest struct {
 	EncryptedSecrets []CosignerEphemeralSecretPart
 	HRST             HRSTKey
 	SignBytes        []byte
+}
+
+type CosignerSignMekatekRequest struct {
+	ChainID           string // For RegisterChallenge only
+	BuildBlockRequest *mekabuild.BuildBlockRequest
+	RegisterChallenge *mekabuild.RegisterChallenge
+}
+
+type CosignerSignMekatekResponse struct {
+	Signature []byte
 }
 
 // Cosigner interface is a set of methods for an m-of-n threshold signature.

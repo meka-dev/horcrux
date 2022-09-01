@@ -5,6 +5,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/meka-dev/mekatek-go/mekabuild"
 	tmCryptoEd2219 "github.com/tendermint/tendermint/crypto/ed25519"
 	tmCryptoEncoding "github.com/tendermint/tendermint/crypto/encoding"
 	tmLog "github.com/tendermint/tendermint/libs/log"
@@ -132,6 +133,10 @@ func (rs *ReconnRemoteSigner) handleRequest(req tmProtoPrivval.Message) tmProtoP
 		return rs.handlePubKeyRequest()
 	case *tmProtoPrivval.Message_PingRequest:
 		return rs.handlePingRequest()
+	case *tmProtoPrivval.Message_SignMekatekBuildBlockRequest:
+		return rs.handleSignMekatekBuildBlockRequest(typedReq.SignMekatekBuildBlockRequest)
+	case *tmProtoPrivval.Message_SignMekatekRegisterChallengeRequest:
+		return rs.handleSignMekatekRegisterChallenge(typedReq.SignMekatekRegisterChallengeRequest)
 	default:
 		rs.Logger.Error("Unknown request", "err", fmt.Errorf("%v", typedReq))
 		return tmProtoPrivval.Message{}
@@ -178,6 +183,62 @@ func (rs *ReconnRemoteSigner) handleSignProposalRequest(proposal *tmProto.Propos
 	rs.Logger.Info("Signed proposal", "node", rs.address,
 		"height", proposal.Height, "round", proposal.Round, "type", proposal.Type)
 	msgSum.SignedProposalResponse.Proposal = *proposal
+	return tmProtoPrivval.Message{Sum: msgSum}
+}
+
+func (rs *ReconnRemoteSigner) handleSignMekatekBuildBlockRequest(req *tmProtoPrivval.SignMekatekBuildBlockRequest) tmProtoPrivval.Message {
+	msgSum := &tmProtoPrivval.Message_SignMekatekBuildBlockRequestResponse{
+		SignMekatekBuildBlockRequestResponse: &tmProtoPrivval.SignMekatekBuildBlockRequestResponse{},
+	}
+
+	request := &mekabuild.BuildBlockRequest{
+		ChainID:          req.ChainID,
+		Height:           req.Height,
+		ValidatorAddress: req.ValidatorAddr,
+		MaxBytes:         req.MaxBytes,
+		MaxGas:           req.MaxGas,
+		Txs:              req.Txs,
+	}
+
+	if err := rs.privVal.SignMekatekBuildBlockRequest(request); err != nil {
+		switch typedErr := err.(type) {
+		case *BeyondBlockError:
+			rs.Logger.Debug("Rejecting mekatek build block request signing", "reason", typedErr.msg)
+		default:
+			rs.Logger.Error("Failed to sign mekatek build block request", "address", rs.address, "error", err, "req", request)
+		}
+		msgSum.SignMekatekBuildBlockRequestResponse.Error = getRemoteSignerError(err)
+		return tmProtoPrivval.Message{Sum: msgSum}
+	}
+
+	rs.Logger.Info("Signed mekatek build block request", "node", rs.address, "req", request)
+	msgSum.SignMekatekBuildBlockRequestResponse.Signature = request.Signature
+	return tmProtoPrivval.Message{Sum: msgSum}
+}
+
+func (rs *ReconnRemoteSigner) handleSignMekatekRegisterChallenge(req *tmProtoPrivval.SignMekatekRegisterChallenge) tmProtoPrivval.Message {
+	msgSum := &tmProtoPrivval.Message_SignMekatekRegisterChallengeResponse{
+		SignMekatekRegisterChallengeResponse: &tmProtoPrivval.SignMekatekRegisterChallengeResponse{},
+	}
+
+	request := &mekabuild.RegisterChallenge{
+		// ChainID:          req.ChainID,
+		Bytes: req.Challenge,
+	}
+
+	if err := rs.privVal.SignMekatekRegisterChallenge(request); err != nil {
+		switch typedErr := err.(type) {
+		case *BeyondBlockError:
+			rs.Logger.Debug("Rejecting mekatek register challenge sign request", "reason", typedErr.msg)
+		default:
+			rs.Logger.Error("Failed to sign mekatek register challenge", "address", rs.address, "error", err, "req", request)
+		}
+		msgSum.SignMekatekRegisterChallengeResponse.Error = getRemoteSignerError(err)
+		return tmProtoPrivval.Message{Sum: msgSum}
+	}
+
+	rs.Logger.Info("Signed mekatek register challenge", "node", rs.address, "req", request)
+	msgSum.SignMekatekRegisterChallengeResponse.Signature = request.Signature
 	return tmProtoPrivval.Message{Sum: msgSum}
 }
 

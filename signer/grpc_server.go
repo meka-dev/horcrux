@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
+	"github.com/meka-dev/mekatek-go/mekabuild"
 	proto "github.com/strangelove-ventures/horcrux/signer/proto"
 )
 
@@ -31,6 +32,36 @@ func (rpc *GRPCServer) SignBlock(
 	}
 	return &proto.CosignerGRPCSignBlockResponse{
 		Signature: res,
+	}, nil
+}
+
+func (rpc *GRPCServer) SignMekatek(
+	ctx context.Context, req *proto.CosignerGRPCSignMekatekRequest) (*proto.CosignerGRPCSignMekatekResponse, error) {
+
+	var request CosignerSignMekatekRequest
+
+	switch r := req.GetRequest().(type) {
+	case *proto.CosignerGRPCSignMekatekRequest_BuildBlockRequest:
+		request.BuildBlockRequest = &mekabuild.BuildBlockRequest{
+			ChainID:          r.BuildBlockRequest.ChainId,
+			Height:           r.BuildBlockRequest.Height,
+			ValidatorAddress: r.BuildBlockRequest.ValidatorAddr,
+			MaxBytes:         r.BuildBlockRequest.MaxBytes,
+			MaxGas:           r.BuildBlockRequest.MaxGas,
+			Txs:              r.BuildBlockRequest.Txs,
+		}
+	case *proto.CosignerGRPCSignMekatekRequest_RegisterChallenge:
+		request.RegisterChallenge = &mekabuild.RegisterChallenge{
+			Bytes: r.RegisterChallenge.Challenge,
+		}
+	}
+
+	signature, err := rpc.thresholdValidator.SignMekatek(request)
+	if err != nil {
+		return nil, err
+	}
+	return &proto.CosignerGRPCSignMekatekResponse{
+		Signature: signature,
 	}, nil
 }
 

@@ -37,6 +37,7 @@ mkfile_dir := $(dir $(mkfile_path))
 
 signer-proto:
 	docker run \
+	  --platform linux/x86_64 \
 	  --rm \
 	  -u $(shell id -u ${USER}):$(shell id -g ${USER}) \
 		--mount type=bind,source=$(mkfile_dir)/signer/proto,target=/horcrux/signer/proto \
@@ -47,6 +48,6 @@ signer-proto:
 		--go-grpc_out=/horcrux \
 		--go-grpc_opt=paths=source_relative \
 		--proto_path /horcrux \
-		$(shell find $(mkfile_dir) -name *.proto -printf "%P\n")
+		 signer/proto/cosigner_grpc_server.proto
 
 .PHONY: all lint test race msan tools clean build

@@ -3,6 +3,7 @@ package signer
 import (
 	"sync"
 
+	"github.com/meka-dev/mekatek-go/mekabuild"
 	"github.com/tendermint/tendermint/crypto"
 	tmProto "github.com/tendermint/tendermint/proto/tendermint/types"
 	tm "github.com/tendermint/tendermint/types"
@@ -34,4 +35,16 @@ func (pv *PvGuard) SignProposal(chainID string, proposal *tmProto.Proposal) erro
 	pv.pvMutex.Lock()
 	defer pv.pvMutex.Unlock()
 	return pv.PrivValidator.SignProposal(chainID, proposal)
+}
+
+func (pv *PvGuard) SignMekatekBuildBlockRequest(req *mekabuild.BuildBlockRequest) error {
+	pv.pvMutex.Lock()
+	defer pv.pvMutex.Unlock()
+	return pv.PrivValidator.SignMekatekBuildBlockRequest(req)
+}
+
+func (pv *PvGuard) SignMekatekRegisterChallenge(c *mekabuild.RegisterChallenge) error {
+	pv.pvMutex.Lock()
+	defer pv.pvMutex.Unlock()
+	return pv.PrivValidator.SignMekatekRegisterChallenge(c)
 }
